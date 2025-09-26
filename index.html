@@ -354,7 +354,7 @@
           }
         };
 
-        // 나머지 핸들러 함수들 (간소화)
+        // 노드 선택
         const selectNode = (nodeId, e) => {
           e.stopPropagation();
           
@@ -400,6 +400,213 @@
           }
         };
 
+        // 마우스 이벤트 핸들러들
+        const handleCanvasMouseDown = (e) => {
+          if (e.button === 1) {
+            e.preventDefault();
+            setIsMiddleMouseDown(true);
+            setDragStart({ x: e.clientX, y: e.clientY });
+            return;
+          }
+
+          if (selectedTool !== 'select') return;
+          
+          const rect = canvasRef.current.getBoundingClientRect();
+          const startX = e.clientX - rect.left;
+          const startY = e.clientY - rect.top;
+          
+          setIsSelecting(true);
+          setSelectionBox({
+            startX: (startX - canvasOffset.x) / zoom,
+            startY: (startY - canvasOffset.y) / zoom,
+            endX: (startX - canvasOffset.x) / zoom,
+            endY: (startY - canvasOffset.y) / zoom
+          });
+        };
+
+        const handleMouseDown = (nodeId, e) => {
+          if (e.button === 1) {
+            e.preventDefault();
+            setIsMiddleMouseDown(true);
+            setDragStart({ x: e.clientX, y: e.clientY });
+            return;
+          }
+
+          if (selectedTool === 'connect') return;
+          
+          e.stopPropagation();
+          setIsDragging(true);
+          setDragStart({ x: e.clientX, y: e.clientY });
+          
+          if (!selectedNodes.includes(nodeId)) {
+            setSelectedNodes([nodeId]);
+          }
+        };
+
+        const handleMouseMove = (e) => {
+          if (isMiddleMouseDown) {
+            const deltaX = e.clientX - dragStart.x;
+            const deltaY = e.clientY - dragStart.y;
+            
+            setCanvasOffset(prev => ({
+              x: prev.x + deltaX,
+              y: prev.y + deltaY
+            }));
+            
+            setDragStart({ x: e.clientX, y: e.clientY });
+            return;
+          }
+
+          if (isSelecting) {
+            const rect = canvasRef.current.getBoundingClientRect();
+            const currentX = e.clientX - rect.left;
+            const currentY = e.clientY - rect.top;
+            
+            setSelectionBox(prev => ({
+              ...prev,
+              endX: (currentX - canvasOffset.x) / zoom,
+              endY: (currentY - canvasOffset.y) / zoom
+            }));
+            return;
+          }
+          
+          if (!isDragging || selectedNodes.length === 0) return;
+
+          const deltaX = (e.clientX - dragStart.x) / zoom;
+          const deltaY = (e.clientY - dragStart.y) / zoom;
+
+          const movingNodes = nodes.filter(node => selectedNodes.includes(node.id))
+            .map(node => ({ ...node, x: node.x + deltaX, y: node.y + deltaY }));
+          
+          const guides = calculateSmartGuides(movingNodes);
+          setSmartGuides(guides);
+
+          setNodes(prev => prev.map(node => 
+            selectedNodes.includes(node.id) 
+              ? { ...node, x: node.x + deltaX, y: node.y + deltaY }
+              : node
+          ));
+
+          setDragStart({ x: e.clientX, y: e.clientY });
+        };
+
+        const handleMouseUp = (e) => {
+          if (isMiddleMouseDown) {
+            setIsMiddleMouseDown(false);
+            return;
+          }
+
+          if (isSelecting) {
+            if (selectionBox) {
+              const { startX, startY, endX, endY } = selectionBox;
+              const minX = Math.min(startX, endX);
+              const maxX = Math.max(startX, endX);
+              const minY = Math.min(startY, endY);
+              const maxY = Math.max(startY, endY);
+              
+              const selectedNodeIds = nodes
+                .filter(node => {
+                  const nodeRight = node.x + node.width;
+                  const nodeBottom = node.y + node.height;
+                  
+                  return node.x < maxX && nodeRight > minX && 
+                         node.y < maxY && nodeBottom > minY;
+                })
+                .map(node => node.id);
+              
+              setSelectedNodes(selectedNodeIds);
+            }
+            setSelectionBox(null);
+            setIsSelecting(false);
+          }
+          
+          if (isDragging) {
+            setSmartGuides([]);
+            saveToHistory();
+          }
+          setIsDragging(false);
+        };
+
+        // 줌/팬 처리
+        const handleWheel = (e) => {
+          e.preventDefault();
+          
+          if (e.ctrlKey || e.metaKey) {
+            const rect = canvasRef.current.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+            
+            const zoomFactor = e.deltaY < 0 ? 1.05 : 0.95;
+            const newZoom = Math.max(0.1, Math.min(5, zoom * zoomFactor));
+            
+            const scaleFactor = newZoom / zoom;
+            
+            setCanvasOffset(prev => ({
+              x: mouseX - (mouseX - prev.x) * scaleFactor,
+              y: mouseY - (mouseY - prev.y) * scaleFactor
+            }));
+            
+            setZoom(newZoom);
+          } else {
+            const panSpeed = 1.2;
+            setCanvasOffset(prev => ({
+              x: prev.x - e.deltaX * panSpeed,
+              y: prev.y - e.deltaY * panSpeed
+            }));
+          }
+        };
+
+        // 텍스트 편집
+        const handleDoubleClick = (nodeId, e) => {
+          e.stopPropagation();
+          setEditingNode(nodeId);
+        };
+
+        const updateNodeText = (nodeId, text) => {
+          setNodes(prev => prev.map(node =>
+            node.id === nodeId ? { ...node, text } : node
+          ));
+          setEditingNode(null);
+          saveToHistory();
+        };
+
+        const updateNodeStyle = (nodeId, updates) => {
+          setNodes(prev => prev.map(node =>
+            node.id === nodeId ? { ...node, ...updates } : node
+          ));
+          saveToHistory();
+        };
+
+        // 삭제/복사
+        const deleteSelected = () => {
+          setNodes(prev => prev.filter(node => !selectedNodes.includes(node.id)));
+          setConnections(prev => prev.filter(conn => 
+            !selectedNodes.includes(conn.from) && !selectedNodes.includes(conn.to)
+          ));
+          setSelectedNodes([]);
+          saveToHistory();
+        };
+
+        const copySelected = () => {
+          const selectedNodesData = nodes.filter(node => selectedNodes.includes(node.id));
+          setClipboard(selectedNodesData);
+        };
+
+        const paste = () => {
+          if (clipboard.length === 0) return;
+          
+          const newNodes = clipboard.map(node => ({
+            ...node,
+            id: Date.now() + Math.random(),
+            x: node.x + 20,
+            y: node.y + 20
+          }));
+          
+          setNodes(prev => [...prev, ...newNodes]);
+          setSelectedNodes(newNodes.map(node => node.id));
+          saveToHistory();
+        };
+
         // 파일 저장/로드
         const saveProject = () => {
           const project = {
@@ -409,4 +616,688 @@
             zoom,
             timestamp: new Date().toISOString(),
             version: '1.0',
-            appVersion: '
+            appVersion: 'PWA-v53'
+          };
+          
+          try {
+            const jsonString = JSON.stringify(project, null, 2);
+            const blob = new Blob([jsonString], { type: 'application/json;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `mindmap-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.json`;
+            link.style.display = 'none';
+            
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            
+            setTimeout(() => {
+              URL.revokeObjectURL(url);
+            }, 100);
+            
+            alert('마인드맵이 성공적으로 저장되었습니다! 💾');
+          } catch (error) {
+            alert('저장 중 오류가 발생했습니다.');
+          }
+        };
+
+        const loadProject = (e) => {
+          const file = e.target.files[0];
+          if (!file) return;
+          
+          if (!file.name.toLowerCase().endsWith('.json')) {
+            alert('JSON 파일만 불러올 수 있습니다.');
+            return;
+          }
+          
+          const reader = new FileReader();
+          reader.onload = (event) => {
+            try {
+              const project = JSON.parse(event.target.result);
+              
+              if (!project.nodes || !Array.isArray(project.nodes)) {
+                throw new Error('유효하지 않은 파일입니다.');
+              }
+              
+              setNodes(project.nodes || []);
+              setConnections(project.connections || []);
+              setCanvasOffset(project.canvasOffset || { x: 0, y: 0 });
+              setZoom(project.zoom || 1);
+              setSelectedNodes([]);
+              setContextMenu(null);
+              saveToHistory();
+              
+              alert('마인드맵이 성공적으로 불러와졌습니다! 📂');
+            } catch (error) {
+              alert('파일을 불러오는데 실패했습니다.');
+            }
+          };
+          
+          reader.readAsText(file);
+          e.target.value = '';
+        };
+
+        // 키보드 단축키
+        useEffect(() => {
+          const handleKeyDown = (e) => {
+            if (editingNode) return;
+            
+            if (e.ctrlKey || e.metaKey) {
+              switch (e.key) {
+                case 'z':
+                  e.preventDefault();
+                  e.shiftKey ? redo() : undo();
+                  break;
+                case 'y':
+                  e.preventDefault();
+                  redo();
+                  break;
+                case 'c':
+                  e.preventDefault();
+                  copySelected();
+                  break;
+                case 'v':
+                  e.preventDefault();
+                  paste();
+                  break;
+                case 's':
+                  e.preventDefault();
+                  saveProject();
+                  break;
+                case 'a':
+                  e.preventDefault();
+                  setSelectedNodes(nodes.map(n => n.id));
+                  break;
+              }
+            } else if (e.key === 'Delete' || e.key === 'Backspace') {
+              deleteSelected();
+            } else if (e.key === 'Escape') {
+              setSelectedNodes([]);
+              setConnectingFrom(null);
+              setSelectedTool('select');
+              setContextMenu(null);
+            }
+          };
+
+          window.addEventListener('keydown', handleKeyDown);
+          return () => window.removeEventListener('keydown', handleKeyDown);
+        }, [selectedNodes, clipboard, historyIndex, nodes, editingNode]);
+
+        // 연결선 렌더링
+        const renderConnection = (connection) => {
+          const fromNode = nodes.find(n => n.id === connection.from);
+          const toNode = nodes.find(n => n.id === connection.to);
+          
+          if (!fromNode || !toNode) return null;
+          
+          const fromCenterX = fromNode.x + fromNode.width / 2;
+          const fromCenterY = fromNode.y + fromNode.height / 2;
+          const toCenterX = toNode.x + toNode.width / 2;
+          const toCenterY = toNode.y + toNode.height / 2;
+          
+          const deltaX = toCenterX - fromCenterX;
+          const deltaY = toCenterY - fromCenterY;
+          
+          let fromX, fromY, toX, toY;
+          
+          if (Math.abs(deltaX) > Math.abs(deltaY)) {
+            if (deltaX > 0) {
+              fromX = fromNode.x + fromNode.width;
+              fromY = fromCenterY;
+              toX = toNode.x;
+              toY = toCenterY;
+            } else {
+              fromX = fromNode.x;
+              fromY = fromCenterY;
+              toX = toNode.x + toNode.width;
+              toY = toCenterY;
+            }
+          } else {
+            if (deltaY > 0) {
+              fromX = fromCenterX;
+              fromY = fromNode.y + fromNode.height;
+              toX = toCenterX;
+              toY = toNode.y;
+            } else {
+              fromX = fromCenterX;
+              fromY = fromNode.y;
+              toX = toCenterX;
+              toY = toNode.y + toNode.height;
+            }
+          }
+          
+          const screenFromX = fromX * zoom + canvasOffset.x;
+          const screenFromY = fromY * zoom + canvasOffset.y;
+          const screenToX = toX * zoom + canvasOffset.x;
+          const screenToY = toY * zoom + canvasOffset.y;
+          
+          const angle = Math.atan2(screenToY - screenFromY, screenToX - screenFromX);
+          const arrowLength = Math.max(8, 12 * zoom);
+          const arrowAngle = Math.PI / 5;
+          
+          const arrowX1 = screenToX - arrowLength * Math.cos(angle - arrowAngle);
+          const arrowY1 = screenToY - arrowLength * Math.sin(angle - arrowAngle);
+          const arrowX2 = screenToX - arrowLength * Math.cos(angle + arrowAngle);
+          const arrowY2 = screenToY - arrowLength * Math.sin(angle + arrowAngle);
+          
+          return (
+            <g key={connection.id}>
+              <line
+                x1={screenFromX}
+                y1={screenFromY}
+                x2={screenToX}
+                y2={screenToY}
+                stroke={connection.color}
+                strokeWidth={Math.max(1, connection.width * zoom)}
+              />
+              {connection.hasArrow && (
+                <polygon
+                  points={`${screenToX},${screenToY} ${arrowX1},${arrowY1} ${arrowX2},${arrowY2}`}
+                  fill={connection.color}
+                />
+              )}
+            </g>
+          );
+        };
+
+        // 노드 렌더링
+        const renderNode = (node) => {
+          const x = node.x * zoom + canvasOffset.x;
+          const y = node.y * zoom + canvasOffset.y;
+          const width = node.width * zoom;
+          const height = node.height * zoom;
+          const isSelected = selectedNodes.includes(node.id);
+          
+          let nodeElement;
+          
+          switch (node.shape) {
+            case 'circle':
+              nodeElement = (
+                <ellipse
+                  cx={x + width / 2}
+                  cy={y + height / 2}
+                  rx={width / 2}
+                  ry={height / 2}
+                  fill={node.color}
+                  stroke={isSelected ? '#007acc' : node.borderColor}
+                  strokeWidth={isSelected ? 3 : 2}
+                />
+              );
+              break;
+            case 'diamond':
+              const centerX = x + width / 2;
+              const centerY = y + height / 2;
+              nodeElement = (
+                <polygon
+                  points={`${centerX},${y} ${x + width},${centerY} ${centerX},${y + height} ${x},${centerY}`}
+                  fill={node.color}
+                  stroke={isSelected ? '#007acc' : node.borderColor}
+                  strokeWidth={isSelected ? 3 : 2}
+                />
+              );
+              break;
+            case 'sticky':
+              nodeElement = (
+                <g>
+                  <rect
+                    x={x}
+                    y={y}
+                    width={width}
+                    height={height}
+                    fill="#fff3cd"
+                    stroke="#ffc107"
+                    strokeWidth={2}
+                    rx={5}
+                  />
+                  <polygon
+                    points={`${x + width - 15},${y} ${x + width},${y} ${x + width},${y + 15}`}
+                    fill="#ffc107"
+                  />
+                </g>
+              );
+              break;
+            default:
+              nodeElement = (
+                <rect
+                  x={x}
+                  y={y}
+                  width={width}
+                  height={height}
+                  fill={node.color}
+                  stroke={isSelected ? '#007acc' : node.borderColor}
+                  strokeWidth={isSelected ? 3 : 2}
+                  rx={5}
+                />
+              );
+          }
+
+          return (
+            <g key={node.id}>
+              {nodeElement}
+              {editingNode === node.id ? (
+                <foreignObject x={x} y={y + height/2 - 10} width={width} height={20}>
+                  <input
+                    type="text"
+                    defaultValue={node.text}
+                    style={{
+                      width: '100%',
+                      border: 'none',
+                      background: 'transparent',
+                      textAlign: 'center',
+                      fontSize: `${node.fontSize * zoom}px`,
+                      color: node.textColor
+                    }}
+                    autoFocus
+                    onBlur={(e) => updateNodeText(node.id, e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        updateNodeText(node.id, e.target.value);
+                      }
+                    }}
+                  />
+                </foreignObject>
+              ) : (
+                <text
+                  x={x + width / 2}
+                  y={y + height / 2}
+                  textAnchor="middle"
+                  dominantBaseline="middle"
+                  fill={node.textColor}
+                  fontSize={node.fontSize * zoom}
+                  style={{ userSelect: 'none', pointerEvents: 'none' }}
+                >
+                  {node.text}
+                </text>
+              )}
+              <rect
+                x={x}
+                y={y}
+                width={width}
+                height={height}
+                fill="transparent"
+                style={{ cursor: 'move' }}
+                onMouseDown={(e) => handleMouseDown(node.id, e)}
+                onClick={(e) => selectNode(node.id, e)}
+                onDoubleClick={(e) => handleDoubleClick(node.id, e)}
+              />
+              
+              {isSelected && selectedTool === 'select' && selectedNodes.length === 1 && (
+                <g>
+                  <circle
+                    cx={x + width / 2}
+                    cy={y}
+                    r={6}
+                    fill="#007acc"
+                    stroke="white"
+                    strokeWidth={2}
+                    style={{ cursor: 'pointer' }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      createConnectedNode(node.id, 'top');
+                    }}
+                  />
+                  <circle
+                    cx={x + width}
+                    cy={y + height / 2}
+                    r={6}
+                    fill="#007acc"
+                    stroke="white"
+                    strokeWidth={2}
+                    style={{ cursor: 'pointer' }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      createConnectedNode(node.id, 'right');
+                    }}
+                  />
+                  <circle
+                    cx={x + width / 2}
+                    cy={y + height}
+                    r={6}
+                    fill="#007acc"
+                    stroke="white"
+                    strokeWidth={2}
+                    style={{ cursor: 'pointer' }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      createConnectedNode(node.id, 'bottom');
+                    }}
+                  />
+                  <circle
+                    cx={x}
+                    cy={y + height / 2}
+                    r={6}
+                    fill="#007acc"
+                    stroke="white"
+                    strokeWidth={2}
+                    style={{ cursor: 'pointer' }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      createConnectedNode(node.id, 'left');
+                    }}
+                  />
+                </g>
+              )}
+            </g>
+          );
+        };
+
+        // 컨텍스트 메뉴
+        const renderContextMenu = () => {
+          if (!contextMenu) return null;
+          
+          const selectedNode = nodes.find(n => n.id === contextMenu.nodeId);
+          if (!selectedNode) return null;
+
+          return (
+            <div
+              className="absolute bg-white rounded-lg shadow-xl border border-gray-200 p-2 flex items-center gap-1 z-50"
+              style={{
+                left: Math.max(10, Math.min(contextMenu.x - 150, window.innerWidth - 320)),
+                top: Math.max(10, contextMenu.y)
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <select
+                value={selectedNode.shape}
+                onChange={(e) => updateNodeStyle(selectedNode.id, { shape: e.target.value })}
+                className="p-1 border rounded text-xs"
+              >
+                <option value="rectangle">🔳</option>
+                <option value="circle">⭕</option>
+                <option value="diamond">♦️</option>
+                <option value="sticky">📄</option>
+              </select>
+
+              <input
+                type="number"
+                value={selectedNode.fontSize}
+                onChange={(e) => updateNodeStyle(selectedNode.id, { fontSize: parseInt(e.target.value) })}
+                className="w-12 p-1 border rounded text-xs"
+                min="8"
+                max="72"
+              />
+
+              <input
+                type="color"
+                value={selectedNode.textColor}
+                onChange={(e) => updateNodeStyle(selectedNode.id, { textColor: e.target.value })}
+                className="w-6 h-6 border-0 rounded cursor-pointer"
+              />
+
+              <input
+                type="color"
+                value={selectedNode.borderColor}
+                onChange={(e) => updateNodeStyle(selectedNode.id, { borderColor: e.target.value })}
+                className="w-6 h-6 border-0 rounded cursor-pointer"
+              />
+
+              <input
+                type="color"
+                value={selectedNode.color}
+                onChange={(e) => updateNodeStyle(selectedNode.id, { color: e.target.value })}
+                className="w-6 h-6 border-0 rounded cursor-pointer"
+              />
+
+              <button
+                onClick={() => setContextMenu(null)}
+                className="ml-2 p-1 hover:bg-gray-100 rounded text-gray-500"
+              >
+                ×
+              </button>
+            </div>
+          );
+        };
+
+        return (
+          <div className="w-full h-screen bg-gray-100 flex flex-col relative">
+            {/* PWA 설치 프롬프트 */}
+            {isInstallPromptVisible && (
+              <div className="bg-gradient-to-r from-blue-600 to-purple-600 text-white p-3 flex items-center justify-between shadow-lg pwa-install-prompt">
+                <div className="flex items-center gap-3">
+                  <div className="text-2xl">📱</div>
+                  <div>
+                    <div className="font-semibold">앱으로 설치하세요!</div>
+                    <div className="text-sm opacity-90">오프라인에서도 사용하고 더 빠르게 접근하세요</div>
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleInstallClick}
+                    className="bg-white text-blue-600 px-4 py-2 rounded-lg font-semibold hover:bg-blue-50"
+                  >
+                    설치
+                  </button>
+                  <button
+                    onClick={() => setIsInstallPromptVisible(false)}
+                    className="text-white hover:bg-white hover:bg-opacity-20 px-3 py-2 rounded-lg"
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* PWA 안내 */}
+            <div className="bg-green-50 border-b border-green-200 p-2 text-sm text-green-700 text-center">
+              🌟 <strong>PWA 지원:</strong> Chrome/Edge/Safari에서 "설치" 또는 "홈 화면에 추가"로 네이티브 앱처럼 사용하세요!
+            </div>
+
+            {renderContextMenu()}
+
+            {/* 툴바 */}
+            <div className="bg-white border-b border-gray-300 p-2 flex items-center gap-2 flex-wrap">
+              <div className="flex items-center gap-1 border-r pr-2">
+                <button
+                  className={`p-2 rounded ${selectedTool === 'select' ? 'bg-blue-100 text-blue-600' : 'hover:bg-gray-100'}`}
+                  onClick={() => setSelectedTool('select')}
+                >
+                  <MousePointer size={18} />
+                </button>
+                <button
+                  className={`p-2 rounded ${selectedTool === 'rectangle' ? 'bg-blue-100 text-blue-600' : 'hover:bg-gray-100'}`}
+                  onClick={() => setSelectedTool('rectangle')}
+                >
+                  <Square size={18} />
+                </button>
+                <button
+                  className={`p-2 rounded ${selectedTool === 'circle' ? 'bg-blue-100 text-blue-600' : 'hover:bg-gray-100'}`}
+                  onClick={() => setSelectedTool('circle')}
+                >
+                  <Circle size={18} />
+                </button>
+                <button
+                  className={`p-2 rounded ${selectedTool === 'diamond' ? 'bg-blue-100 text-blue-600' : 'hover:bg-gray-100'}`}
+                  onClick={() => setSelectedTool('diamond')}
+                >
+                  <Diamond size={18} />
+                </button>
+                <button
+                  className={`p-2 rounded ${selectedTool === 'sticky' ? 'bg-blue-100 text-blue-600' : 'hover:bg-gray-100'}`}
+                  onClick={() => setSelectedTool('sticky')}
+                >
+                  📄
+                </button>
+                <button
+                  className={`p-2 rounded ${selectedTool === 'connect' ? 'bg-blue-100 text-blue-600' : 'hover:bg-gray-100'}`}
+                  onClick={() => setSelectedTool('connect')}
+                >
+                  ↔️
+                </button>
+              </div>
+
+              <div className="flex items-center gap-1 border-r pr-2">
+                <button
+                  className="p-2 rounded hover:bg-gray-100"
+                  onClick={undo}
+                  disabled={historyIndex <= 0}
+                >
+                  <RotateCcw size={18} />
+                </button>
+                <button
+                  className="p-2 rounded hover:bg-gray-100"
+                  onClick={redo}
+                  disabled={historyIndex >= history.length - 1}
+                >
+                  <RotateCw size={18} />
+                </button>
+                <button
+                  className="p-2 rounded hover:bg-gray-100"
+                  onClick={copySelected}
+                  disabled={selectedNodes.length === 0}
+                >
+                  <Copy size={18} />
+                </button>
+                <button
+                  className="p-2 rounded hover:bg-gray-100"
+                  onClick={deleteSelected}
+                  disabled={selectedNodes.length === 0}
+                >
+                  <Trash2 size={18} />
+                </button>
+              </div>
+
+              <div className="flex items-center gap-1 border-r pr-2">
+                <button
+                  className="p-2 rounded hover:bg-gray-100"
+                  onClick={() => setZoom(prev => Math.min(5, prev * 1.2))}
+                >
+                  <ZoomIn size={18} />
+                </button>
+                <button
+                  className="p-2 rounded hover:bg-gray-100"
+                  onClick={() => setZoom(prev => Math.max(0.1, prev / 1.2))}
+                >
+                  <ZoomOut size={18} />
+                </button>
+                <span className="text-sm text-gray-600 min-w-[60px] text-center">
+                  {Math.round(zoom * 100)}%
+                </span>
+                <button
+                  className="p-2 rounded hover:bg-gray-100"
+                  onClick={() => {
+                    setZoom(1);
+                    setCanvasOffset({ x: 0, y: 0 });
+                  }}
+                >
+                  <Move size={18} />
+                </button>
+              </div>
+
+              <div className="flex items-center gap-1">
+                <button
+                  className="p-2 rounded hover:bg-gray-100"
+                  onClick={saveProject}
+                >
+                  <Download size={18} />
+                </button>
+                <label className="p-2 rounded hover:bg-gray-100 cursor-pointer">
+                  <Upload size={18} />
+                  <input
+                    type="file"
+                    accept=".json,application/json"
+                    onChange={loadProject}
+                    className="hidden"
+                  />
+                </label>
+              </div>
+            </div>
+
+            {/* 캔버스 */}
+            <div className="flex-1 relative overflow-hidden">
+              <svg
+                ref={canvasRef}
+                className="w-full h-full cursor-grab active:cursor-grabbing"
+                onClick={handleCanvasClick}
+                onMouseDown={handleCanvasMouseDown}
+                onMouseMove={handleMouseMove}
+                onMouseUp={handleMouseUp}
+                onMouseLeave={handleMouseUp}
+                onWheel={handleWheel}
+                onContextMenu={(e) => e.preventDefault()}
+                style={{
+                  backgroundImage: `radial-gradient(circle, #ddd 1px, transparent 1px)`,
+                  backgroundSize: `${20 * zoom}px ${20 * zoom}px`,
+                  backgroundPosition: `${canvasOffset.x}px ${canvasOffset.y}px`
+                }}
+              >
+                {smartGuides.map((guide, index) => (
+                  <g key={`guide-${index}`}>
+                    {guide.type === 'vertical' ? (
+                      <line
+                        x1={guide.position * zoom + canvasOffset.x}
+                        y1={guide.range[0] * zoom + canvasOffset.y}
+                        x2={guide.position * zoom + canvasOffset.x}
+                        y2={guide.range[1] * zoom + canvasOffset.y}
+                        stroke="#ff0080"
+                        strokeWidth={1}
+                        strokeDasharray="3,3"
+                      />
+                    ) : (
+                      <line
+                        x1={guide.range[0] * zoom + canvasOffset.x}
+                        y1={guide.position * zoom + canvasOffset.y}
+                        x2={guide.range[1] * zoom + canvasOffset.x}
+                        y2={guide.position * zoom + canvasOffset.y}
+                        stroke="#ff0080"
+                        strokeWidth={1}
+                        strokeDasharray="3,3"
+                      />
+                    )}
+                  </g>
+                ))}
+                
+                {selectionBox && (
+                  <rect
+                    x={Math.min(selectionBox.startX, selectionBox.endX) * zoom + canvasOffset.x}
+                    y={Math.min(selectionBox.startY, selectionBox.endY) * zoom + canvasOffset.y}
+                    width={Math.abs(selectionBox.endX - selectionBox.startX) * zoom}
+                    height={Math.abs(selectionBox.endY - selectionBox.startY) * zoom}
+                    fill="rgba(0, 122, 255, 0.1)"
+                    stroke="rgba(0, 122, 255, 0.5)"
+                    strokeWidth={1}
+                    strokeDasharray="5,5"
+                  />
+                )}
+
+                {connections.map(renderConnection)}
+                {nodes.map(renderNode)}
+              </svg>
+              
+              <div className="absolute top-4 right-4 bg-white rounded-lg shadow-lg p-3 text-sm">
+                <div>노드: {nodes.length}개</div>
+                <div>연결: {connections.length}개</div>
+                <div>선택됨: {selectedNodes.length}개</div>
+                {connectingFrom && <div className="text-orange-600">연결 모드</div>}
+              </div>
+              
+              <div className="absolute bottom-4 left-4 bg-white rounded-lg shadow-lg p-3 text-xs text-gray-600 max-w-md">
+                <div><strong>🎯 PWA 마인드맵 v53</strong></div>
+                <div className="grid grid-cols-2 gap-1 mt-1">
+                  <div>V: 선택</div>
+                  <div>R: 사각형</div>
+                  <div>O: 원형</div>
+                  <div>L: 연결선</div>
+                </div>
+                <div className="mt-2"><strong>⌨️ 편집:</strong></div>
+                <div>Ctrl+Z: 실행취소, Ctrl+Y: 다시실행</div>
+                <div>휠클릭+드래그: 부드러운 패닝</div>
+                <div className="mt-2"><strong>🔍 뷰:</strong></div>
+                <div>Ctrl+마우스휠: 부드러운 줌, 휠: 패닝</div>
+                <div className="mt-2"><strong>📱 PWA 기능:</strong></div>
+                <div>• 오프라인 사용 가능</div>
+                <div>• 모든 기기에서 앱으로 설치</div>
+                <div>• 고급 파일 저장 (지원 브라우저)</div>
+              </div>
+            </div>
+          </div>
+        );
+      };
+
+      // React 앱 시작
+      const root = createRoot(document.getElementById('root'));
+      root.render(<MiroMindMap />);
+    }
+  </script>
+</body>
+</html>
