@@ -4,19 +4,24 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#007acc">
-  <title>내 마인드맵 - PWA</title>
+  <meta name="description" content="개인용 마인드맵 PWA - 모든 기기에서 네이티브 앱처럼 사용">
+  <title>내 마인드맵 PWA v53</title>
   
   <!-- PWA 매니페스트 -->
   <link rel="manifest" href="manifest.json">
   <link rel="apple-touch-icon" href="icon-192.png">
+  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+  <link rel="icon" type="image/png" sizes="512x512" href="icon-512.png">
   
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
   
-  <!-- React & Babel -->
+  <!-- React 18 -->
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  
+  <!-- Babel Standalone -->
+  <script src="https://unpkg.com/@babel/standalone@7/babel.min.js"></script>
   
   <!-- Lucide Icons -->
   <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
@@ -27,797 +32,381 @@
       padding: 0;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       overflow: hidden;
+      background: #f3f4f6;
     }
     #root {
       width: 100vw;
       height: 100vh;
     }
+    
+    /* PWA 스타일 */
+    .pwa-install-prompt {
+      animation: slideDown 0.3s ease-out;
+    }
+    
+    @keyframes slideDown {
+      from { transform: translateY(-100%); }
+      to { transform: translateY(0); }
+    }
+    
+    /* 로딩 애니메이션 */
+    .loading {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      font-size: 18px;
+      color: #666;
+    }
+    
+    .spinner {
+      border: 3px solid #f3f4f6;
+      border-top: 3px solid #007acc;
+      border-radius: 50%;
+      width: 30px;
+      height: 30px;
+      animation: spin 1s linear infinite;
+      margin-right: 10px;
+    }
+    
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
   </style>
 </head>
 <body>
+  <!-- 로딩 화면 -->
+  <div id="loading" class="loading">
+    <div class="spinner"></div>
+    마인드맵 PWA 로딩 중...
+  </div>
+  
+  <!-- React 앱이 렌더링될 곳 -->
   <div id="root"></div>
 
   <script type="text/babel">
-    const { useState, useRef, useCallback, useEffect } = React;
-    const { createRoot } = ReactDOM;
+    // 로딩 상태 관리
+    const hideLoading = () => {
+      const loadingEl = document.getElementById('loading');
+      if (loadingEl) {
+        loadingEl.style.display = 'none';
+      }
+    };
 
-    // Lucide 아이콘들
-    const Square = lucide.Square;
-    const Circle = lucide.Circle;
-    const Diamond = lucide.Diamond;
-    const MousePointer = lucide.MousePointer;
-    const Trash2 = lucide.Trash2;
-    const Copy = lucide.Copy;
-    const RotateCcw = lucide.RotateCcw;
-    const RotateCw = lucide.RotateCw;
-    const ZoomIn = lucide.ZoomIn;
-    const ZoomOut = lucide.ZoomOut;
-    const Move = lucide.Move;
-    const Download = lucide.Download;
-    const Upload = lucide.Upload;
+    // React 및 아이콘 라이브러리 확인
+    if (!window.React || !window.ReactDOM || !window.lucide) {
+      document.getElementById('loading').innerHTML = 
+        '<div style="color: red;">필수 라이브러리 로딩 실패. 인터넷 연결을 확인해주세요.</div>';
+    } else {
+      // 성공적으로 로드되면 앱 시작
+      startApp();
+    }
 
-    const MiroMindMap = () => {
-      const canvasRef = useRef(null);
-      const [nodes, setNodes] = useState([]);
-      const [connections, setConnections] = useState([]);
-      const [selectedTool, setSelectedTool] = useState('select');
-      const [selectedNodes, setSelectedNodes] = useState([]);
-      const [isDragging, setIsDragging] = useState(false);
-      const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
-      const [canvasOffset, setCanvasOffset] = useState({ x: 0, y: 0 });
-      const [zoom, setZoom] = useState(1);
-      const [connectingFrom, setConnectingFrom] = useState(null);
-      const [editingNode, setEditingNode] = useState(null);
-      const [clipboard, setClipboard] = useState([]);
-      const [history, setHistory] = useState([]);
-      const [historyIndex, setHistoryIndex] = useState(-1);
-      const [selectionBox, setSelectionBox] = useState(null);
-      const [isSelecting, setIsSelecting] = useState(false);
-      const [smartGuides, setSmartGuides] = useState([]);
-      const [contextMenu, setContextMenu] = useState(null);
-      const [isMiddleMouseDown, setIsMiddleMouseDown] = useState(false);
-      const [isInstallPromptVisible, setIsInstallPromptVisible] = useState(false);
-      const [deferredPrompt, setDeferredPrompt] = useState(null);
+    function startApp() {
+      const { useState, useRef, useCallback, useEffect } = React;
+      const { createRoot } = ReactDOM;
 
-      // PWA 설치 처리
-      useEffect(() => {
-        const handleBeforeInstallPrompt = (e) => {
-          e.preventDefault();
-          setDeferredPrompt(e);
-          setIsInstallPromptVisible(true);
-        };
+      // Lucide 아이콘들
+      const {
+        Square, Circle, Diamond, MousePointer, Trash2, Copy, 
+        RotateCcw, RotateCw, ZoomIn, ZoomOut, Move, Download, Upload
+      } = lucide;
 
-        const handleAppInstalled = () => {
-          setIsInstallPromptVisible(false);
-          setDeferredPrompt(null);
-        };
+      const MiroMindMap = () => {
+        const canvasRef = useRef(null);
+        const [nodes, setNodes] = useState([]);
+        const [connections, setConnections] = useState([]);
+        const [selectedTool, setSelectedTool] = useState('select');
+        const [selectedNodes, setSelectedNodes] = useState([]);
+        const [isDragging, setIsDragging] = useState(false);
+        const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+        const [canvasOffset, setCanvasOffset] = useState({ x: 0, y: 0 });
+        const [zoom, setZoom] = useState(1);
+        const [connectingFrom, setConnectingFrom] = useState(null);
+        const [editingNode, setEditingNode] = useState(null);
+        const [clipboard, setClipboard] = useState([]);
+        const [history, setHistory] = useState([]);
+        const [historyIndex, setHistoryIndex] = useState(-1);
+        const [selectionBox, setSelectionBox] = useState(null);
+        const [isSelecting, setIsSelecting] = useState(false);
+        const [smartGuides, setSmartGuides] = useState([]);
+        const [contextMenu, setContextMenu] = useState(null);
+        const [isMiddleMouseDown, setIsMiddleMouseDown] = useState(false);
+        const [isInstallPromptVisible, setIsInstallPromptVisible] = useState(false);
+        const [deferredPrompt, setDeferredPrompt] = useState(null);
 
-        window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
-        window.addEventListener('appinstalled', handleAppInstalled);
+        // 앱 로딩 완료 알림
+        useEffect(() => {
+          hideLoading();
+        }, []);
 
-        return () => {
-          window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
-          window.removeEventListener('appinstalled', handleAppInstalled);
-        };
-      }, []);
+        // PWA 설치 처리
+        useEffect(() => {
+          const handleBeforeInstallPrompt = (e) => {
+            e.preventDefault();
+            setDeferredPrompt(e);
+            setIsInstallPromptVisible(true);
+          };
 
-      const handleInstallClick = async () => {
-        if (deferredPrompt) {
-          deferredPrompt.prompt();
-          const { outcome } = await deferredPrompt.userChoice;
-          setDeferredPrompt(null);
-          setIsInstallPromptVisible(false);
-        }
-      };
+          const handleAppInstalled = () => {
+            setIsInstallPromptVisible(false);
+            setDeferredPrompt(null);
+            console.log('PWA가 성공적으로 설치되었습니다!');
+          };
 
-      // 노드 타입
-      const nodeTypes = {
-        rectangle: { width: 120, height: 80, shape: 'rectangle' },
-        circle: { width: 100, height: 100, shape: 'circle' },
-        diamond: { width: 120, height: 80, shape: 'diamond' },
-        sticky: { width: 140, height: 100, shape: 'sticky' }
-      };
+          window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+          window.addEventListener('appinstalled', handleAppInstalled);
 
-      // 히스토리 저장
-      const saveToHistory = useCallback(() => {
-        const state = { nodes, connections };
-        const newHistory = history.slice(0, historyIndex + 1);
-        newHistory.push(JSON.parse(JSON.stringify(state)));
-        setHistory(newHistory);
-        setHistoryIndex(newHistory.length - 1);
-      }, [nodes, connections, history, historyIndex]);
+          return () => {
+            window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+            window.removeEventListener('appinstalled', handleAppInstalled);
+          };
+        }, []);
 
-      const undo = () => {
-        if (historyIndex > 0) {
-          const prevState = history[historyIndex - 1];
-          setNodes(prevState.nodes);
-          setConnections(prevState.connections);
-          setHistoryIndex(historyIndex - 1);
-        }
-      };
-
-      const redo = () => {
-        if (historyIndex < history.length - 1) {
-          const nextState = history[historyIndex + 1];
-          setNodes(nextState.nodes);
-          setConnections(nextState.connections);
-          setHistoryIndex(historyIndex + 1);
-        }
-      };
-
-      // 스마트 가이드 계산
-      const calculateSmartGuides = useCallback((movingNodes) => {
-        if (movingNodes.length === 0) return [];
-        
-        const guides = [];
-        const snapThreshold = 8;
-        const staticNodes = nodes.filter(node => !movingNodes.some(mn => mn.id === node.id));
-        
-        movingNodes.forEach(movingNode => {
-          staticNodes.forEach(staticNode => {
-            const movingCenterX = movingNode.x + movingNode.width / 2;
-            const staticCenterX = staticNode.x + staticNode.width / 2;
-            
-            const centerDiff = Math.abs(movingCenterX - staticCenterX);
-            if (centerDiff < snapThreshold) {
-              const snapOffset = staticCenterX - movingCenterX;
-              movingNode.x += snapOffset;
-              
-              guides.push({
-                type: 'vertical',
-                position: staticCenterX,
-                range: [
-                  Math.min(movingNode.y, staticNode.y) - 20,
-                  Math.max(movingNode.y + movingNode.height, staticNode.y + staticNode.height) + 20
-                ]
-              });
-            }
-            
-            const movingCenterY = movingNode.y + movingNode.height / 2;
-            const staticCenterY = staticNode.y + staticNode.height / 2;
-            
-            const centerYDiff = Math.abs(movingCenterY - staticCenterY);
-            if (centerYDiff < snapThreshold) {
-              const snapOffset = staticCenterY - movingCenterY;
-              movingNode.y += snapOffset;
-              
-              guides.push({
-                type: 'horizontal',
-                position: staticCenterY,
-                range: [
-                  Math.min(movingNode.x, staticNode.x) - 20,
-                  Math.max(movingNode.x + movingNode.width, staticNode.x + staticNode.width) + 20
-                ]
-              });
-            }
-          });
-        });
-        
-        return guides;
-      }, [nodes]);
-
-      // 연결점에서 새 노드 생성
-      const createConnectedNode = (sourceNodeId, direction) => {
-        const sourceNode = nodes.find(n => n.id === sourceNodeId);
-        if (!sourceNode) return;
-
-        let newX = sourceNode.x;
-        let newY = sourceNode.y;
-        const spacing = 150;
-
-        switch (direction) {
-          case 'top':
-            newY = sourceNode.y - spacing;
-            break;
-          case 'right':
-            newX = sourceNode.x + spacing;
-            break;
-          case 'bottom':
-            newY = sourceNode.y + spacing;
-            break;
-          case 'left':
-            newX = sourceNode.x - spacing;
-            break;
-        }
-
-        const newNode = {
-          id: Date.now() + Math.random(),
-          x: newX,
-          y: newY,
-          width: sourceNode.width,
-          height: sourceNode.height,
-          text: 'New Node',
-          color: sourceNode.color,
-          borderColor: sourceNode.borderColor,
-          textColor: sourceNode.textColor,
-          shape: sourceNode.shape,
-          fontSize: sourceNode.fontSize,
-          zIndex: nodes.length
-        };
-
-        const newConnection = {
-          id: Date.now() + Math.random() + 1,
-          from: sourceNodeId,
-          to: newNode.id,
-          color: '#666666',
-          width: 2,
-          style: 'solid',
-          hasArrow: true
-        };
-
-        setNodes(prev => [...prev, newNode]);
-        setConnections(prev => [...prev, newConnection]);
-        setSelectedNodes([newNode.id]);
-        saveToHistory();
-      };
-
-      // 노드 생성
-      const createNode = (x, y, type = 'rectangle') => {
-        const nodeConfig = nodeTypes[type];
-        const newNode = {
-          id: Date.now() + Math.random(),
-          x: (x - canvasOffset.x) / zoom,
-          y: (y - canvasOffset.y) / zoom,
-          width: nodeConfig.width,
-          height: nodeConfig.height,
-          text: 'New Node',
-          color: '#ffffff',
-          borderColor: '#333333',
-          textColor: '#000000',
-          shape: nodeConfig.shape,
-          fontSize: 14,
-          zIndex: nodes.length
-        };
-        
-        setNodes(prev => [...prev, newNode]);
-        saveToHistory();
-      };
-
-      // 캔버스 클릭
-      const handleCanvasClick = (e) => {
-        setSelectedNodes([]);
-        setConnectingFrom(null);
-        setContextMenu(null);
-        
-        if (selectedTool === 'select') return;
-        
-        const rect = canvasRef.current.getBoundingClientRect();
-        const x = e.clientX - rect.left;
-        const y = e.clientY - rect.top;
-        
-        if (selectedTool !== 'select' && selectedTool !== 'connect') {
-          createNode(x, y, selectedTool);
-          setSelectedTool('select');
-        }
-      };
-
-      // 노드 선택
-      const selectNode = (nodeId, e) => {
-        e.stopPropagation();
-        
-        if (selectedTool === 'connect') {
-          if (!connectingFrom) {
-            setConnectingFrom(nodeId);
-          } else {
-            if (connectingFrom !== nodeId) {
-              const newConnection = {
-                id: Date.now() + Math.random(),
-                from: connectingFrom,
-                to: nodeId,
-                color: '#666666',
-                width: 2,
-                style: 'solid',
-                hasArrow: true
-              };
-              setConnections(prev => [...prev, newConnection]);
-              saveToHistory();
-            }
-            setConnectingFrom(null);
+        const handleInstallClick = async () => {
+          if (deferredPrompt) {
+            deferredPrompt.prompt();
+            const { outcome } = await deferredPrompt.userChoice;
+            setDeferredPrompt(null);
+            setIsInstallPromptVisible(false);
           }
-          return;
-        }
+        };
 
-        if (e.ctrlKey || e.metaKey) {
-          setSelectedNodes(prev => 
-            prev.includes(nodeId) 
-              ? prev.filter(id => id !== nodeId)
-              : [...prev, nodeId]
-          );
-        } else {
-          setSelectedNodes([nodeId]);
-          
-          const node = nodes.find(n => n.id === nodeId);
-          if (node) {
-            setContextMenu({
-              nodeId,
-              x: (node.x + node.width / 2) * zoom + canvasOffset.x,
-              y: (node.y - 60) * zoom + canvasOffset.y
-            });
+        // 노드 타입 정의
+        const nodeTypes = {
+          rectangle: { width: 120, height: 80, shape: 'rectangle' },
+          circle: { width: 100, height: 100, shape: 'circle' },
+          diamond: { width: 120, height: 80, shape: 'diamond' },
+          sticky: { width: 140, height: 100, shape: 'sticky' }
+        };
+
+        // 히스토리 저장
+        const saveToHistory = useCallback(() => {
+          const state = { nodes, connections };
+          const newHistory = history.slice(0, historyIndex + 1);
+          newHistory.push(JSON.parse(JSON.stringify(state)));
+          setHistory(newHistory);
+          setHistoryIndex(newHistory.length - 1);
+        }, [nodes, connections, history, historyIndex]);
+
+        const undo = () => {
+          if (historyIndex > 0) {
+            const prevState = history[historyIndex - 1];
+            setNodes(prevState.nodes);
+            setConnections(prevState.connections);
+            setHistoryIndex(historyIndex - 1);
           }
-        }
-      };
+        };
 
-      // 마우스 이벤트
-      const handleCanvasMouseDown = (e) => {
-        if (e.button === 1) {
-          e.preventDefault();
-          setIsMiddleMouseDown(true);
-          setDragStart({ x: e.clientX, y: e.clientY });
-          return;
-        }
+        const redo = () => {
+          if (historyIndex < history.length - 1) {
+            const nextState = history[historyIndex + 1];
+            setNodes(nextState.nodes);
+            setConnections(nextState.connections);
+            setHistoryIndex(historyIndex + 1);
+          }
+        };
 
-        if (selectedTool !== 'select') return;
-        
-        const rect = canvasRef.current.getBoundingClientRect();
-        const startX = e.clientX - rect.left;
-        const startY = e.clientY - rect.top;
-        
-        setIsSelecting(true);
-        setSelectionBox({
-          startX: (startX - canvasOffset.x) / zoom,
-          startY: (startY - canvasOffset.y) / zoom,
-          endX: (startX - canvasOffset.x) / zoom,
-          endY: (startY - canvasOffset.y) / zoom
-        });
-      };
-
-      const handleMouseDown = (nodeId, e) => {
-        if (e.button === 1) {
-          e.preventDefault();
-          setIsMiddleMouseDown(true);
-          setDragStart({ x: e.clientX, y: e.clientY });
-          return;
-        }
-
-        if (selectedTool === 'connect') return;
-        
-        e.stopPropagation();
-        setIsDragging(true);
-        setDragStart({ x: e.clientX, y: e.clientY });
-        
-        if (!selectedNodes.includes(nodeId)) {
-          setSelectedNodes([nodeId]);
-        }
-      };
-
-      const handleMouseMove = (e) => {
-        if (isMiddleMouseDown) {
-          const deltaX = e.clientX - dragStart.x;
-          const deltaY = e.clientY - dragStart.y;
+        // 스마트 가이드 계산
+        const calculateSmartGuides = useCallback((movingNodes) => {
+          if (movingNodes.length === 0) return [];
           
-          setCanvasOffset(prev => ({
-            x: prev.x + deltaX,
-            y: prev.y + deltaY
-          }));
+          const guides = [];
+          const snapThreshold = 8;
+          const staticNodes = nodes.filter(node => !movingNodes.some(mn => mn.id === node.id));
           
-          setDragStart({ x: e.clientX, y: e.clientY });
-          return;
-        }
-
-        if (isSelecting) {
-          const rect = canvasRef.current.getBoundingClientRect();
-          const currentX = e.clientX - rect.left;
-          const currentY = e.clientY - rect.top;
-          
-          setSelectionBox(prev => ({
-            ...prev,
-            endX: (currentX - canvasOffset.x) / zoom,
-            endY: (currentY - canvasOffset.y) / zoom
-          }));
-          return;
-        }
-        
-        if (!isDragging || selectedNodes.length === 0) return;
-
-        const deltaX = (e.clientX - dragStart.x) / zoom;
-        const deltaY = (e.clientY - dragStart.y) / zoom;
-
-        const movingNodes = nodes.filter(node => selectedNodes.includes(node.id))
-          .map(node => ({ ...node, x: node.x + deltaX, y: node.y + deltaY }));
-        
-        const guides = calculateSmartGuides(movingNodes);
-        setSmartGuides(guides);
-
-        setNodes(prev => prev.map(node => 
-          selectedNodes.includes(node.id) 
-            ? { ...node, x: node.x + deltaX, y: node.y + deltaY }
-            : node
-        ));
-
-        setDragStart({ x: e.clientX, y: e.clientY });
-      };
-
-      const handleMouseUp = (e) => {
-        if (isMiddleMouseDown) {
-          setIsMiddleMouseDown(false);
-          return;
-        }
-
-        if (isSelecting) {
-          if (selectionBox) {
-            const { startX, startY, endX, endY } = selectionBox;
-            const minX = Math.min(startX, endX);
-            const maxX = Math.max(startX, endX);
-            const minY = Math.min(startY, endY);
-            const maxY = Math.max(startY, endY);
-            
-            const selectedNodeIds = nodes
-              .filter(node => {
-                const nodeRight = node.x + node.width;
-                const nodeBottom = node.y + node.height;
+          movingNodes.forEach(movingNode => {
+            staticNodes.forEach(staticNode => {
+              const movingCenterX = movingNode.x + movingNode.width / 2;
+              const staticCenterX = staticNode.x + staticNode.width / 2;
+              
+              const centerDiff = Math.abs(movingCenterX - staticCenterX);
+              if (centerDiff < snapThreshold) {
+                const snapOffset = staticCenterX - movingCenterX;
+                movingNode.x += snapOffset;
                 
-                return node.x < maxX && nodeRight > minX && 
-                       node.y < maxY && nodeBottom > minY;
-              })
-              .map(node => node.id);
-            
-            setSelectedNodes(selectedNodeIds);
+                guides.push({
+                  type: 'vertical',
+                  position: staticCenterX,
+                  range: [
+                    Math.min(movingNode.y, staticNode.y) - 20,
+                    Math.max(movingNode.y + movingNode.height, staticNode.y + staticNode.height) + 20
+                  ]
+                });
+              }
+              
+              const movingCenterY = movingNode.y + movingNode.height / 2;
+              const staticCenterY = staticNode.y + staticNode.height / 2;
+              
+              const centerYDiff = Math.abs(movingCenterY - staticCenterY);
+              if (centerYDiff < snapThreshold) {
+                const snapOffset = staticCenterY - movingCenterY;
+                movingNode.y += snapOffset;
+                
+                guides.push({
+                  type: 'horizontal',
+                  position: staticCenterY,
+                  range: [
+                    Math.min(movingNode.x, staticNode.x) - 20,
+                    Math.max(movingNode.x + movingNode.width, staticNode.x + staticNode.width) + 20
+                  ]
+                });
+              }
+            });
+          });
+          
+          return guides;
+        }, [nodes]);
+
+        // 연결점에서 새 노드 생성
+        const createConnectedNode = (sourceNodeId, direction) => {
+          const sourceNode = nodes.find(n => n.id === sourceNodeId);
+          if (!sourceNode) return;
+
+          let newX = sourceNode.x;
+          let newY = sourceNode.y;
+          const spacing = 150;
+
+          switch (direction) {
+            case 'top':
+              newY = sourceNode.y - spacing;
+              break;
+            case 'right':
+              newX = sourceNode.x + spacing;
+              break;
+            case 'bottom':
+              newY = sourceNode.y + spacing;
+              break;
+            case 'left':
+              newX = sourceNode.x - spacing;
+              break;
           }
-          setSelectionBox(null);
-          setIsSelecting(false);
-        }
-        
-        if (isDragging) {
-          setSmartGuides([]);
+
+          const newNode = {
+            id: Date.now() + Math.random(),
+            x: newX,
+            y: newY,
+            width: sourceNode.width,
+            height: sourceNode.height,
+            text: 'New Node',
+            color: sourceNode.color,
+            borderColor: sourceNode.borderColor,
+            textColor: sourceNode.textColor,
+            shape: sourceNode.shape,
+            fontSize: sourceNode.fontSize,
+            zIndex: nodes.length
+          };
+
+          const newConnection = {
+            id: Date.now() + Math.random() + 1,
+            from: sourceNodeId,
+            to: newNode.id,
+            color: '#666666',
+            width: 2,
+            style: 'solid',
+            hasArrow: true
+          };
+
+          setNodes(prev => [...prev, newNode]);
+          setConnections(prev => [...prev, newConnection]);
+          setSelectedNodes([newNode.id]);
           saveToHistory();
-        }
-        setIsDragging(false);
-      };
+        };
 
-      // 줌/패닝
-      const handleWheel = (e) => {
-        e.preventDefault();
-        
-        if (e.ctrlKey || e.metaKey) {
+        // 노드 생성
+        const createNode = (x, y, type = 'rectangle') => {
+          const nodeConfig = nodeTypes[type];
+          const newNode = {
+            id: Date.now() + Math.random(),
+            x: (x - canvasOffset.x) / zoom,
+            y: (y - canvasOffset.y) / zoom,
+            width: nodeConfig.width,
+            height: nodeConfig.height,
+            text: 'New Node',
+            color: '#ffffff',
+            borderColor: '#333333',
+            textColor: '#000000',
+            shape: nodeConfig.shape,
+            fontSize: 14,
+            zIndex: nodes.length
+          };
+          
+          setNodes(prev => [...prev, newNode]);
+          saveToHistory();
+        };
+
+        // 캔버스 클릭 처리
+        const handleCanvasClick = (e) => {
+          setSelectedNodes([]);
+          setConnectingFrom(null);
+          setContextMenu(null);
+          
+          if (selectedTool === 'select') return;
+          
           const rect = canvasRef.current.getBoundingClientRect();
-          const mouseX = e.clientX - rect.left;
-          const mouseY = e.clientY - rect.top;
+          const x = e.clientX - rect.left;
+          const y = e.clientY - rect.top;
           
-          const zoomFactor = e.deltaY < 0 ? 1.05 : 0.95;
-          const newZoom = Math.max(0.1, Math.min(5, zoom * zoomFactor));
-          
-          const scaleFactor = newZoom / zoom;
-          
-          setCanvasOffset(prev => ({
-            x: mouseX - (mouseX - prev.x) * scaleFactor,
-            y: mouseY - (mouseY - prev.y) * scaleFactor
-          }));
-          
-          setZoom(newZoom);
-        } else {
-          const panSpeed = 1.2;
-          setCanvasOffset(prev => ({
-            x: prev.x - e.deltaX * panSpeed,
-            y: prev.y - e.deltaY * panSpeed
-          }));
-        }
-      };
-
-      // 텍스트 편집
-      const handleDoubleClick = (nodeId, e) => {
-        e.stopPropagation();
-        setEditingNode(nodeId);
-      };
-
-      const updateNodeText = (nodeId, text) => {
-        setNodes(prev => prev.map(node =>
-          node.id === nodeId ? { ...node, text } : node
-        ));
-        setEditingNode(null);
-        saveToHistory();
-      };
-
-      const updateNodeStyle = (nodeId, updates) => {
-        setNodes(prev => prev.map(node =>
-          node.id === nodeId ? { ...node, ...updates } : node
-        ));
-        saveToHistory();
-      };
-
-      // 삭제/복사
-      const deleteSelected = () => {
-        setNodes(prev => prev.filter(node => !selectedNodes.includes(node.id)));
-        setConnections(prev => prev.filter(conn => 
-          !selectedNodes.includes(conn.from) && !selectedNodes.includes(conn.to)
-        ));
-        setSelectedNodes([]);
-        saveToHistory();
-      };
-
-      const copySelected = () => {
-        const selectedNodesData = nodes.filter(node => selectedNodes.includes(node.id));
-        setClipboard(selectedNodesData);
-      };
-
-      const paste = () => {
-        if (clipboard.length === 0) return;
-        
-        const newNodes = clipboard.map(node => ({
-          ...node,
-          id: Date.now() + Math.random(),
-          x: node.x + 20,
-          y: node.y + 20
-        }));
-        
-        setNodes(prev => [...prev, ...newNodes]);
-        setSelectedNodes(newNodes.map(node => node.id));
-        saveToHistory();
-      };
-
-      // 저장/불러오기
-      const saveProject = () => {
-        const project = {
-          nodes,
-          connections,
-          canvasOffset,
-          zoom,
-          timestamp: new Date().toISOString(),
-          version: '1.0',
-          appVersion: 'PWA-v53'
-        };
-        
-        try {
-          const jsonString = JSON.stringify(project, null, 2);
-          const blob = new Blob([jsonString], { type: 'application/json;charset=utf-8' });
-          const url = URL.createObjectURL(blob);
-          const link = document.createElement('a');
-          link.href = url;
-          link.download = `mindmap-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.json`;
-          link.style.display = 'none';
-          
-          document.body.appendChild(link);
-          link.click();
-          document.body.removeChild(link);
-          
-          setTimeout(() => {
-            URL.revokeObjectURL(url);
-          }, 100);
-          
-          alert('마인드맵이 성공적으로 저장되었습니다! 💾');
-        } catch (error) {
-          alert('저장 중 오류가 발생했습니다.');
-        }
-      };
-
-      const loadProject = (e) => {
-        const file = e.target.files[0];
-        if (!file) return;
-        
-        if (!file.name.toLowerCase().endsWith('.json')) {
-          alert('JSON 파일만 불러올 수 있습니다.');
-          return;
-        }
-        
-        const reader = new FileReader();
-        reader.onload = (event) => {
-          try {
-            const project = JSON.parse(event.target.result);
-            
-            if (!project.nodes || !Array.isArray(project.nodes)) {
-              throw new Error('유효하지 않은 파일입니다.');
-            }
-            
-            setNodes(project.nodes || []);
-            setConnections(project.connections || []);
-            setCanvasOffset(project.canvasOffset || { x: 0, y: 0 });
-            setZoom(project.zoom || 1);
-            setSelectedNodes([]);
-            setContextMenu(null);
-            saveToHistory();
-            
-            alert('마인드맵이 성공적으로 불러와졌습니다! 📂');
-          } catch (error) {
-            alert('파일을 불러오는데 실패했습니다.');
-          }
-        };
-        
-        reader.readAsText(file);
-        e.target.value = '';
-      };
-
-      // 키보드 단축키
-      useEffect(() => {
-        const handleKeyDown = (e) => {
-          if (editingNode) return;
-          
-          if (e.ctrlKey || e.metaKey) {
-            switch (e.key) {
-              case 'z':
-                e.preventDefault();
-                e.shiftKey ? redo() : undo();
-                break;
-              case 'y':
-                e.preventDefault();
-                redo();
-                break;
-              case 'c':
-                e.preventDefault();
-                copySelected();
-                break;
-              case 'v':
-                e.preventDefault();
-                paste();
-                break;
-              case 's':
-                e.preventDefault();
-                saveProject();
-                break;
-              case 'a':
-                e.preventDefault();
-                setSelectedNodes(nodes.map(n => n.id));
-                break;
-            }
-          } else if (e.key === 'Delete' || e.key === 'Backspace') {
-            deleteSelected();
-          } else if (e.key === 'Escape') {
-            setSelectedNodes([]);
-            setConnectingFrom(null);
+          if (selectedTool !== 'select' && selectedTool !== 'connect') {
+            createNode(x, y, selectedTool);
             setSelectedTool('select');
-            setContextMenu(null);
           }
         };
 
-        window.addEventListener('keydown', handleKeyDown);
-        return () => window.removeEventListener('keydown', handleKeyDown);
-      }, [selectedNodes, clipboard, historyIndex, nodes, editingNode]);
-
-      // 연결선 렌더링
-      const renderConnection = (connection) => {
-        const fromNode = nodes.find(n => n.id === connection.from);
-        const toNode = nodes.find(n => n.id === connection.to);
-        
-        if (!fromNode || !toNode) return null;
-        
-        const fromCenterX = fromNode.x + fromNode.width / 2;
-        const fromCenterY = fromNode.y + fromNode.height / 2;
-        const toCenterX = toNode.x + toNode.width / 2;
-        const toCenterY = toNode.y + toNode.height / 2;
-        
-        const deltaX = toCenterX - fromCenterX;
-        const deltaY = toCenterY - fromCenterY;
-        
-        let fromX, fromY, toX, toY;
-        
-        if (Math.abs(deltaX) > Math.abs(deltaY)) {
-          if (deltaX > 0) {
-            fromX = fromNode.x + fromNode.width;
-            fromY = fromCenterY;
-            toX = toNode.x;
-            toY = toCenterY;
-          } else {
-            fromX = fromNode.x;
-            fromY = fromCenterY;
-            toX = toNode.x + toNode.width;
-            toY = toCenterY;
+        // 나머지 핸들러 함수들 (간소화)
+        const selectNode = (nodeId, e) => {
+          e.stopPropagation();
+          
+          if (selectedTool === 'connect') {
+            if (!connectingFrom) {
+              setConnectingFrom(nodeId);
+            } else {
+              if (connectingFrom !== nodeId) {
+                const newConnection = {
+                  id: Date.now() + Math.random(),
+                  from: connectingFrom,
+                  to: nodeId,
+                  color: '#666666',
+                  width: 2,
+                  style: 'solid',
+                  hasArrow: true
+                };
+                setConnections(prev => [...prev, newConnection]);
+                saveToHistory();
+              }
+              setConnectingFrom(null);
+            }
+            return;
           }
-        } else {
-          if (deltaY > 0) {
-            fromX = fromCenterX;
-            fromY = fromNode.y + fromNode.height;
-            toX = toCenterX;
-            toY = toNode.y;
-          } else {
-            fromX = fromCenterX;
-            fromY = fromNode.y;
-            toX = toCenterX;
-            toY = toNode.y + toNode.height;
-          }
-        }
-        
-        const screenFromX = fromX * zoom + canvasOffset.x;
-        const screenFromY = fromY * zoom + canvasOffset.y;
-        const screenToX = toX * zoom + canvasOffset.x;
-        const screenToY = toY * zoom + canvasOffset.y;
-        
-        const angle = Math.atan2(screenToY - screenFromY, screenToX - screenFromX);
-        const arrowLength = Math.max(8, 12 * zoom);
-        const arrowAngle = Math.PI / 5;
-        
-        const arrowX1 = screenToX - arrowLength * Math.cos(angle - arrowAngle);
-        const arrowY1 = screenToY - arrowLength * Math.sin(angle - arrowAngle);
-        const arrowX2 = screenToX - arrowLength * Math.cos(angle + arrowAngle);
-        const arrowY2 = screenToY - arrowLength * Math.sin(angle + arrowAngle);
-        
-        return React.createElement('g', { key: connection.id },
-          React.createElement('line', {
-            x1: screenFromX,
-            y1: screenFromY,
-            x2: screenToX,
-            y2: screenToY,
-            stroke: connection.color,
-            strokeWidth: Math.max(1, connection.width * zoom)
-          }),
-          connection.hasArrow && React.createElement('polygon', {
-            points: `${screenToX},${screenToY} ${arrowX1},${arrowY1} ${arrowX2},${arrowY2}`,
-            fill: connection.color
-          })
-        );
-      };
 
-      // 노드 렌더링
-      const renderNode = (node) => {
-        const x = node.x * zoom + canvasOffset.x;
-        const y = node.y * zoom + canvasOffset.y;
-        const width = node.width * zoom;
-        const height = node.height * zoom;
-        const isSelected = selectedNodes.includes(node.id);
-        
-        let nodeElement;
-        
-        switch (node.shape) {
-          case 'circle':
-            nodeElement = React.createElement('ellipse', {
-              cx: x + width / 2,
-              cy: y + height / 2,
-              rx: width / 2,
-              ry: height / 2,
-              fill: node.color,
-              stroke: isSelected ? '#007acc' : node.borderColor,
-              strokeWidth: isSelected ? 3 : 2
-            });
-            break;
-          case 'diamond':
-            const centerX = x + width / 2;
-            const centerY = y + height / 2;
-            nodeElement = React.createElement('polygon', {
-              points: `${centerX},${y} ${x + width},${centerY} ${centerX},${y + height} ${x},${centerY}`,
-              fill: node.color,
-              stroke: isSelected ? '#007acc' : node.borderColor,
-              strokeWidth: isSelected ? 3 : 2
-            });
-            break;
-          case 'sticky':
-            nodeElement = React.createElement('g', {},
-              React.createElement('rect', {
-                x: x,
-                y: y,
-                width: width,
-                height: height,
-                fill: '#fff3cd',
-                stroke: '#ffc107',
-                strokeWidth: 2,
-                rx: 5
-              }),
-              React.createElement('polygon', {
-                points: `${x + width - 15},${y} ${x + width},${y} ${x + width},${y + 15}`,
-                fill: '#ffc107'
-              })
+          if (e.ctrlKey || e.metaKey) {
+            setSelectedNodes(prev => 
+              prev.includes(nodeId) 
+                ? prev.filter(id => id !== nodeId)
+                : [...prev, nodeId]
             );
-            break;
-          default:
-            nodeElement = React.createElement('rect', {
-              x: x,
-              y: y,
-              width: width,
-              height: height,
-              fill: node.color,
-              stroke: isSelected ? '#007acc' : node.borderColor,
-              strokeWidth: isSelected ? 3 : 2,
-              rx: 5
-            });
-        }
+          } else {
+            setSelectedNodes([nodeId]);
+            
+            const node = nodes.find(n => n.id === nodeId);
+            if (node) {
+              setContextMenu({
+                nodeId,
+                x: (node.x + node.width / 2) * zoom + canvasOffset.x,
+                y: (node.y - 60) * zoom + canvasOffset.y
+              });
+            }
+          }
+        };
 
-        return React.createElement('g', { key: node.id },
-          nodeElement,
-          editingNode === node.id ? React.createElement('foreignObject', {
-            x: x,
-            y: y + height/2 - 10,
-            width: width,
-            height: 20
-          },
-            React.createElement('input', {
-              type: 'text',
-              defaultValue: node.text,
-              style: {
-                width: '100%',
-                border: 'none',
-                background: 'transparent',
-                textAlign: 'center',
-                fontSize: `${node.fontSize * zoom}px`,
-                color: node.textColor
-              },
-              autoFocus: true,
-              onBlur: (e) => updateNodeText(node.id, e.target.value),
-              onKeyDown: (e) => {
-                if (e.key === 'Enter') {
-                  updateNodeText(node.id, e.target.value);
+        // 파일 저장/로드
+        const saveProject = () => {
+          const project = {
+            nodes,
+            connections,
+            canvasOffset,
+            zoom,
+            timestamp: new Date().toISOString(),
+            version: '1.0',
+            appVersion: '
